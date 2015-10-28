@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-NODE_BUILD_VERSION="20150215"
+NPMENV_VERSION="20151028"
 
 set -E
 exec 3<&2 # preserve original stderr at fd 3
@@ -285,10 +285,10 @@ fetch_tarball() {
 }
 
 symlink_tarball_from_cache() {
-  [ -n "$NODE_BUILD_CACHE_PATH" ] || return 1
+  [ -n "$NPMENV_CACHE_PATH" ] || return 1
 
   local package_filename="$1"
-  local cached_package_filename="${NODE_BUILD_CACHE_PATH}/$package_filename"
+  local cached_package_filename="${NPMENV_CACHE_PATH}/$package_filename"
   local checksum="$2"
 
   [ -e "$cached_package_filename" ] || return 1
@@ -309,8 +309,8 @@ download_tarball() {
     verify_checksum "$package_filename" "$checksum"
   } >&4 2>&1 || return 1
 
-  if [ -n "$NODE_BUILD_CACHE_PATH" ]; then
-    local cached_package_filename="${NODE_BUILD_CACHE_PATH}/$package_filename"
+  if [ -n "$NPMENV_CACHE_PATH" ]; then
+    local cached_package_filename="${NPMENV_CACHE_PATH}/$package_filename"
     { mv "$package_filename" "$cached_package_filename"
       ln -s "$cached_package_filename" "$package_filename"
     } >&4 2>&1 || return 1
@@ -325,8 +325,8 @@ fetch_git() {
   echo "Cloning ${git_url}..." >&2
 
   if type git &>/dev/null; then
-    if [ -n "$NODE_BUILD_CACHE_PATH" ]; then
-      pushd "$NODE_BUILD_CACHE_PATH" >&4
+    if [ -n "$NPMENV_CACHE_PATH" ]; then
+      pushd "$NPMENV_CACHE_PATH" >&4
       local clone_name="$(sanitize "$git_url")"
       if [ -e "${clone_name}" ]; then
         { cd "${clone_name}"
@@ -335,7 +335,7 @@ fetch_git() {
       else
         git clone --bare --branch "$git_ref" "$git_url" "${clone_name}" >&4 2>&1
       fi
-      git_url="$NODE_BUILD_CACHE_PATH/${clone_name}"
+      git_url="$NPMENV_CACHE_PATH/${clone_name}"
       popd >&4
     fi
 
@@ -442,13 +442,13 @@ fix_directory_permissions() {
 }
 
 version() {
-  echo "node-build ${NODE_BUILD_VERSION}"
+  echo "npmenv ${NPMENV_VERSION}"
 }
 
 usage() {
   { version
-    echo "usage: node-build [-k|--keep] [-v|--verbose] definition prefix"
-    echo "       node-build --definitions"
+    echo "usage: npmenv [-k|--keep] [-v|--verbose] definition prefix"
+    echo "       npmenv --definitions"
   } >&2
 
   if [ -z "$1" ]; then
@@ -456,26 +456,14 @@ usage() {
   fi
 }
 
-list_definitions_node() {
-  curl -s https://nodejs.org/dist/ \
-    | egrep -o 'v[0-9]+\.[0-9]+\.[0-9]+' \
-    | sort -t. -u -k 1.2,1n -k 2,2n -k 3,3n
-}
-
-list_definitions_iojs() {
-  curl -s https://iojs.org/dist/index.tab \
-    | awk '{print $1}' \
-    | egrep -o 'v[0-9]+\.[0-9]+\.[0-9]+' \
-    | sort -t. -u -k 1.2,1n -k 2,2n -k 3,3n \
-    | sed -e 's/^/iojs-/'
+list_definitions_npm() {
+  npm info npm versions | egrep -o "\d[^']+"
 }
 
 list_definitions() {
   local PATTERN=$1
   case "$PATTERN" in
-    iojs-*) list_definitions_iojs ;;
-    node-*) list_definitions_node ;;
-    *)     list_definitions_node; list_definitions_iojs ;;
+    *) list_definitions_npm ;;
   esac
 }
 
@@ -536,88 +524,12 @@ remote_version() {
   fi
 }
 
-install_node() {
+install_npm() {
   local VERSION="$1"
 
-  local uname="$(uname -a)"
-  local os=
-  local arch="$(uname -m)"
-  local nobinary=0
-
-  case "$uname" in
-    Linux\ *) os=linux ;;
-    Darwin\ *) os=darwin; ;;
-    SunOS\ *) os=sunos ;;
-    FreeBSD\ *) os=freebsd; nobinary=1 ;;
-  esac
-  case "$uname" in
-    *x86_64*) arch=x64 ;;
-    *i*86*) arch=x86 ;;
-  esac
-
-  case "$arch" in
-    armv6l) arch=arm-pi ;;
-  esac
-
-  if [ $nobinary -ne 1 ]; then
-    # shortcut - try the binary if possible.
-    if [ -n "$os" ]; then
-      local binavail=
-      # binaries started with node 0.8.6
-      case "$VERSION" in
-        v0.8.[012345]) binavail=0 ;;
-        v0.[1234567].*) binavail=0 ;;
-        *) binavail=1 ;;
-      esac
-
-      sha_algorithm=
-      # checksum is SHA256 in v0.10 and above and SHA1 in v0.9 and below
-      case "$VERSION" in
-        v0.[0-9].*) sha_algorithm= ;;
-        *) sha_algorithm=256 ;;
-      esac
-
-      if [ $binavail -eq 1 ]; then
-        t="$VERSION-$os-$arch"
-        sum=`curl -s https://nodejs.org/dist/$VERSION/SHASUMS${sha_algorithm}.txt | grep node-${t}.tar.gz | awk '{print $1}'`
-        url="https://nodejs.org/dist/$VERSION/node-${t}.tar.gz#${sum}"
-        install_package "node-${t}" "$url" copy
-      fi
-    fi
-  fi
-}
-
-install_iojs() {
-  local VERSION="$1"
-
-  local uname="$(uname -a)"
-  local os=
-  local arch="$(uname -m)"
-  local nobinary=0
-
-  case "$uname" in
-    Linux\ *) os=linux ;;
-    Darwin\ *) os=darwin; ;;
-    SunOS\ *) os=sunos; nobinary=1 ;;
-    FreeBSD\ *) os=freebsd; nobinary=1 ;;
-  esac
-  case "$uname" in
-    *x86_64*) arch=x64 ;;
-    *i*86*) arch=x86 ;;
-  esac
-
-  case "$arch" in
-    armv6l) arch=armv6l ;;
-    armv7l) arch=armv7l ;;
-  esac
-
-  if [ $nobinary -ne 1 ]; then
-    sha_algorithm=256
-    t="$VERSION-$os-$arch"
-    sum=`curl -s https://iojs.org/dist/$VERSION/SHASUMS${sha_algorithm}.txt | grep iojs-${t}.tar.gz | awk '{print $1}'`
-    url="https://iojs.org/dist/$VERSION/iojs-${t}.tar.gz#${sum}"
-    install_package "iojs-${t}" "$url" copy
-  fi
+  echo '>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>';
+  echo $NPMENV_ROOT;
+  echo '@@@@@@@@@@@@@@@@@@@@@@@@@';
 }
 
 do_install() {
@@ -626,16 +538,13 @@ do_install() {
   local DIST="$(get_version_prefix "$NORMALIZED_PATTERN")"
   local VERSION="$(get_version "$NORMALIZED_PATTERN")"
 
-  case "$DIST" in
-    "iojs" ) install_iojs "$VERSION" ;;
-         * ) install_node "$VERSION" ;;
-  esac
+  install_npm "$VERSION"
 }
 
 
 unset VERBOSE
 unset KEEP_BUILD_PATH
-NODE_BUILD_ROOT="$(abs_dirname "$0")/.."
+NPMENV_ROOT="$(abs_dirname "$0")/.."
 
 parse_options "$@"
 
@@ -670,7 +579,7 @@ done
 
 NODE_VERSION=$(remote_version "${ARGUMENTS[0]}") || {
   echo "The specified version is not available."
-  echo "Run ndenv install -l or node-build --definitions"
+  echo "Run ndenv install -l or npmenv --definitions"
   echo "to show available versions of node.js/io.js."
   exit 1
 }
@@ -690,10 +599,10 @@ if [ -z "$MAKE" ]; then
   export MAKE="make"
 fi
 
-if [ -n "$NODE_BUILD_CACHE_PATH" ] && [ -d "$NODE_BUILD_CACHE_PATH" ]; then
-  NODE_BUILD_CACHE_PATH="${NODE_BUILD_CACHE_PATH%/}"
+if [ -n "$NPMENV_CACHE_PATH" ] && [ -d "$NPMENV_CACHE_PATH" ]; then
+  NPMENV_CACHE_PATH="${NPMENV_CACHE_PATH%/}"
 else
-  unset NODE_BUILD_CACHE_PATH
+  unset NPMENV_CACHE_PATH
 fi
 
 if echo test | compute_sha1 >/dev/null; then
@@ -709,14 +618,14 @@ else
 fi
 
 SEED="$(date "+%Y%m%d%H%M%S").$$"
-LOG_PATH="${TMP}/node-build.${SEED}.log"
+LOG_PATH="${TMP}/npmenv.${SEED}.log"
 NODE_BIN="${PREFIX_PATH}/bin/node"
 CWD="$(pwd)"
 
-if [ -z "$NODE_BUILD_BUILD_PATH" ]; then
-  BUILD_PATH="${TMP}/node-build.${SEED}"
+if [ -z "$NPMENV_BUILD_PATH" ]; then
+  BUILD_PATH="${TMP}/npmenv.${SEED}"
 else
-  BUILD_PATH="$NODE_BUILD_BUILD_PATH"
+  BUILD_PATH="$NPMENV_BUILD_PATH"
 fi
 
 exec 4<> "$LOG_PATH" # open the log file at fd 4
