@@ -1,11 +1,11 @@
-# node-build
-node-build is an [ndenv](https://github.com/riywo/ndenv) plugin that provides an `ndenv install` command.
+# npmenv
+npmenv is an [ndenv](https://github.com/riywo/ndenv) plugin that provides an `ndenv npm` command.
 
-Almost all of code come from [ruby-build](https://github.com/sstephenson/ruby-build) and [nvm](https://github.com/creationix/nvm). Thanks a lot!
+Almost all of code come from [node-build](https://github.com/sstephenson/ruby-build). Thanks a lot!
 
 ## INSTALL
 
-    $ git clone https://github.com/riywo/node-build.git ~/.ndenv/plugins/node-build
+    $ git clone https://github.com/fand/npmenv.git ~/.ndenv/plugins/npmenv
 
 node-build currently supports only download a compiled tarball.
 Both [node.js](http://nodejs.org/) and [io.js](https://iojs.org) are supported.
@@ -14,7 +14,7 @@ Both [node.js](http://nodejs.org/) and [io.js](https://iojs.org) are supported.
 
 (The MIT license)
 
-Copyright (c) 2013 Ryosuke Iwanaga
+Copyright (c) 2015 Jun Hwang
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 

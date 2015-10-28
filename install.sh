@@ -7,7 +7,7 @@ if [ -z "${PREFIX}" ]; then
 fi
 
 BIN_PATH="${PREFIX}/bin"
-SHARE_PATH="${PREFIX}/share/node-build"
+SHARE_PATH="${PREFIX}/share/npmenv"
 
 mkdir -p "${BIN_PATH}"
 mkdir -p "${SHARE_PATH}"
@@ -16,8 +16,8 @@ for file in bin/*; do
   cp "${file}" "${BIN_PATH}"
 done
 
-for file in share/node-build/*; do
+for file in share/npmenv/*; do
   cp "${file}" "${SHARE_PATH}"
 done
 
-echo "Installed node-build at ${PREFIX}"
+echo "Installed npmenv at ${PREFIX}"
