@@ -96,59 +96,6 @@ file_is_not_empty() {
   fi
 }
 
-install_package() {
-  install_package_using "tarball" 1 "$@"
-}
-
-install_git() {
-  install_package_using "git" 2 "$@"
-}
-
-install_svn() {
-  install_package_using "svn" 2 "$@"
-}
-
-install_package_using() {
-  local package_type="$1"
-  local package_type_nargs="$2"
-  local package_name="$3"
-  shift 3
-
-  local fetch_args=( "$package_name" "${@:1:$package_type_nargs}" )
-  local make_args=( "$package_name" )
-  local arg last_arg
-
-  for arg in "${@:$(( $package_type_nargs + 1 ))}"; do
-    if [ "$last_arg" = "--if" ]; then
-      "$arg" || return 0
-    elif [ "$arg" != "--if" ]; then
-      make_args["${#make_args[@]}"]="$arg"
-    fi
-    last_arg="$arg"
-  done
-
-  pushd "$BUILD_PATH" >&4
-  "fetch_${package_type}" "${fetch_args[@]}"
-  make_package "${make_args[@]}"
-  popd >&4
-
-  { echo "Installed ${package_name} to ${PREFIX_PATH}"
-    echo
-  } >&2
-}
-
-make_package() {
-  local package_name="$1"
-  shift
-
-  pushd "$package_name" >&4
-  before_install_package "$package_name"
-  build_package "$package_name" $*
-  after_install_package "$package_name"
-  fix_directory_permissions
-  popd >&4
-}
-
 compute_sha1() {
   local output
   if type shasum &>/dev/null; then
@@ -162,66 +109,6 @@ compute_sha1() {
     output="$(sha1sum --quiet)" || return 1
     echo "${output% *}"
   else
-    return 1
-  fi
-}
-
-compute_sha2() {
-  local output
-  if type shasum &>/dev/null; then
-    output="$(shasum -a 256 -b)" || return 1
-    echo "${output% *}"
-  elif type openssl &>/dev/null; then
-    local openssl="$(command -v "$(brew --prefix openssl 2>/dev/null || true)"/bin/openssl openssl | head -1)"
-    output="$("$openssl" dgst -sha256 2>/dev/null)" || return 1
-    echo "${output##* }"
-  elif type sha256sum &>/dev/null; then
-    output="$(sha256sum --quiet)" || return 1
-    echo "${output% *}"
-  else
-    return 1
-  fi
-}
-
-verify_checksum() {
-  # If the specified filename doesn't exist, return success
-  local filename="$1"
-  [ -e "$filename" ] || return 0
-
-  # If there's no expected checksum, return success
-  local expected_checksum=`echo "$2" | tr [A-Z] [a-z]`
-  [ -n "$expected_checksum" ] || return 0
-  local expected_checksum_length="${#expected_checksum}"
-
-  # If the checksum length is 40 chars, assume SHA-1
-  if [ "$expected_checksum_length" -eq 40 ]; then
-
-    # If there's no SHA1 support, return success
-    [ -n "$HAS_SHA1_SUPPORT" ] || return 0
-    local checksum_command="compute_sha1"
-
-  # If the checksum length is 64 chars, assume SHA-256
-  elif [ "$expected_checksum_length" -eq 64 ]; then
-
-    # If there's no SHA2 support, return success
-    [ -n "$HAS_SHA2_SUPPORT" ] || return 0
-    local checksum_command="compute_sha2"
-
-  # Otherwise return failure
-  else
-    return 1
-  fi
-
-  # If the computed checksum is empty, return failure
-  local computed_checksum=`echo "$($checksum_command < "$filename")" | tr [A-Z] [a-z]`
-  [ -n "$computed_checksum" ] || return 1
-
-  if [ "$expected_checksum" != "$computed_checksum" ]; then
-    { echo
-      echo "checksum mismatch: ${filename} (file is corrupt)"
-      echo "expected $expected_checksum, got $computed_checksum"
-      echo
-    } >&4
     return 1
   fi
 }
@@ -258,184 +145,6 @@ http_get_wget() {
   wget -nv -c -O "${2:--}" "$1"
 }
 
-fetch_tarball() {
-  local package_name="$1"
-  local package_url="$2"
-  local checksum
-
-  if [ "$package_url" != "${package_url/\#}" ]; then
-    checksum="${package_url#*#}"
-    package_url="${package_url%%#*}"
-  fi
-
-  local package_filename="${package_name}.tar.gz"
-  symlink_tarball_from_cache "$package_filename" "$checksum" || {
-    echo "Downloading ${package_filename}..." >&2
-    download_tarball "$package_url" "$package_filename" "$checksum"
-  }
-
-  { if tar xzvf "$package_filename"; then
-      if [ -z "$KEEP_BUILD_PATH" ]; then
-        rm -f "$package_filename"
-      else
-        true
-      fi
-    fi
-  } >&4 2>&1
-}
-
-symlink_tarball_from_cache() {
-  [ -n "$NPMENV_CACHE_PATH" ] || return 1
-
-  local package_filename="$1"
-  local cached_package_filename="${NPMENV_CACHE_PATH}/$package_filename"
-  local checksum="$2"
-
-  [ -e "$cached_package_filename" ] || return 1
-  verify_checksum "$cached_package_filename" "$checksum" >&4 2>&1 || return 1
-  ln -s "$cached_package_filename" "$package_filename" >&4 2>&1 || return 1
-}
-
-download_tarball() {
-  local package_url="$1"
-  [ -n "$package_url" ] || return 1
-
-  local package_filename="$2"
-  local checksum="$3"
-
-  echo "-> $package_url" >&2
-
-  { http get "$package_url" "$package_filename"
-    verify_checksum "$package_filename" "$checksum"
-  } >&4 2>&1 || return 1
-
-  if [ -n "$NPMENV_CACHE_PATH" ]; then
-    local cached_package_filename="${NPMENV_CACHE_PATH}/$package_filename"
-    { mv "$package_filename" "$cached_package_filename"
-      ln -s "$cached_package_filename" "$package_filename"
-    } >&4 2>&1 || return 1
-  fi
-}
-
-fetch_git() {
-  local package_name="$1"
-  local git_url="$2"
-  local git_ref="$3"
-
-  echo "Cloning ${git_url}..." >&2
-
-  if type git &>/dev/null; then
-    if [ -n "$NPMENV_CACHE_PATH" ]; then
-      pushd "$NPMENV_CACHE_PATH" >&4
-      local clone_name="$(sanitize "$git_url")"
-      if [ -e "${clone_name}" ]; then
-        { cd "${clone_name}"
-          git fetch --force "$git_url" "+${git_ref}:${git_ref}"
-        } >&4 2>&1
-      else
-        git clone --bare --branch "$git_ref" "$git_url" "${clone_name}" >&4 2>&1
-      fi
-      git_url="$NPMENV_CACHE_PATH/${clone_name}"
-      popd >&4
-    fi
-
-    git clone --depth 1 --branch "$git_ref" "$git_url" "${package_name}" >&4 2>&1
-  else
-    echo "error: please install \`git\` and try again" >&2
-    exit 1
-  fi
-}
-
-fetch_svn() {
-  local package_name="$1"
-  local svn_url="$2"
-  local svn_rev="$3"
-
-  echo "Checking out ${svn_url}..." >&2
-
-  if type svn &>/dev/null; then
-    svn co -r "$svn_rev" "$svn_url" "${package_name}" >&4 2>&1
-  else
-    echo "error: please install \`svn\` and try again" >&2
-    exit 1
-  fi
-}
-
-build_package() {
-  local package_name="$1"
-  shift
-
-  if [ "$#" -eq 0 ]; then
-    local commands="standard"
-  else
-    local commands="$*"
-  fi
-
-  echo "Installing ${package_name}..." >&2
-
-  for command in $commands; do
-    "build_package_${command}" "$package_name"
-  done
-}
-
-package_option() {
-  local package_name="$1"
-  local command_name="$2"
-  local variable="$(capitalize "${package_name}_${command_name}")_OPTS_ARRAY"
-  local array="$variable[@]"
-  shift 2
-  local value=( "${!array}" "$@" )
-  eval "$variable=( \"\${value[@]}\" )"
-}
-
-build_package_standard() {
-  local package_name="$1"
-
-  if [ "${MAKEOPTS+defined}" ]; then
-    MAKE_OPTS="$MAKEOPTS"
-  elif [ -z "${MAKE_OPTS+defined}" ]; then
-    MAKE_OPTS="-j 2"
-  fi
-
-  # Support YAML_CONFIGURE_OPTS, RUBY_CONFIGURE_OPTS, etc.
-  local package_var_name="$(capitalize "${package_name%%-*}")"
-  local PACKAGE_CONFIGURE="${package_var_name}_CONFIGURE"
-  local PACKAGE_PREFIX_PATH="${package_var_name}_PREFIX_PATH"
-  local PACKAGE_CONFIGURE_OPTS="${package_var_name}_CONFIGURE_OPTS"
-  local PACKAGE_CONFIGURE_OPTS_ARRAY="${package_var_name}_CONFIGURE_OPTS_ARRAY[@]"
-  local PACKAGE_MAKE_OPTS="${package_var_name}_MAKE_OPTS"
-  local PACKAGE_MAKE_OPTS_ARRAY="${package_var_name}_MAKE_OPTS_ARRAY[@]"
-  local PACKAGE_CFLAGS="${package_var_name}_CFLAGS"
-
-  ( if [ "${CFLAGS+defined}" ] || [ "${!PACKAGE_CFLAGS+defined}" ]; then
-      export CFLAGS="$CFLAGS ${!PACKAGE_CFLAGS}"
-    fi
-    ${!PACKAGE_CONFIGURE:-./configure} --prefix="${!PACKAGE_PREFIX_PATH:-$PREFIX_PATH}" $CONFIGURE_OPTS ${!PACKAGE_CONFIGURE_OPTS} "${!PACKAGE_CONFIGURE_OPTS_ARRAY}"
-  ) >&4 2>&1
-
-  { "$MAKE" $MAKE_OPTS ${!PACKAGE_MAKE_OPTS} "${!PACKAGE_MAKE_OPTS_ARRAY}"
-    "$MAKE" install
-  } >&4 2>&1
-}
-
-build_package_autoconf() {
-  { autoconf
-  } >&4 2>&1
-}
-
-build_package_copy() {
-  mkdir -p "$PREFIX_PATH"
-  cp -R . "$PREFIX_PATH"
-}
-
-before_install_package() {
-  local stub=1
-}
-
-after_install_package() {
-  local stub=1
-}
-
 fix_directory_permissions() {
   # Ensure installed directories are not world-writable to avoid Bundler warnings
   find "$PREFIX_PATH" -type d \( -perm -020 -o -perm -002 \) -exec chmod go-w {} \;
@@ -456,25 +165,8 @@ usage() {
   fi
 }
 
-list_definitions_npm() {
-  npm info npm versions | egrep -o "\d[^']+"
-}
-
 list_definitions() {
-  local PATTERN=$1
-  case "$PATTERN" in
-    *) list_definitions_npm ;;
-  esac
-}
-
-get_version_prefix() {
-  local PATTERN=$1
-  local PREFIX=
-  case "$PATTERN" in
-    iojs-*) PREFIX="iojs" ;;
-         *) PREFIX=""     ;;
-  esac
-  echo "$PREFIX"
+  npm info npm versions | egrep -o "\d[^']+"
 }
 
 get_version() {
@@ -484,7 +176,7 @@ get_version() {
 
 normalize_version() {
   local PATTERN=$1
-  local PREFIX=$(get_version_prefix "$PATTERN")
+  local PREFIX="$PATTERN"
   local VERSION=$(get_version "$PATTERN")
   if echo "$VERSION" | grep -v '^v' &>/dev/null ; then
     VERSION=v$VERSION
